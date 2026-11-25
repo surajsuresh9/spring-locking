@@ -1,0 +1,112 @@
+Java Spring Concurrency – Optimistic vs Pessimistic Locking
+
+1. Optimistic Locking
+Uses a @Version column (initially 0).
+No database lock is held while reading records.
+Assumes concurrent updates are relatively rare.
+
+Example:
+
+T1 and T2 both fetch the same movie record with version = 0.
+T1 books the ticket and updates the status.
+Hibernate executes:
+sql
+UPDATE movie
+SET status = 'BOOKED', version = 1
+WHERE id = 1 AND version = 0;
+
+T1 succeeds, and the version becomes 1.
+T2 attempts to update using version = 0.
+No rows are updated because the current version is 1.
+T2 receives an OptimisticLockException.
+
+Key points:
+
+Conflict detection happens during update/flush/commit.
+No long-held database lock.
+Suitable for low-contention scenarios.
+Uses JPA @Version.
+2. Pessimistic Locking
+Does not require a @Version column.
+Uses database-level locks.
+Prevents conflicting transactions from modifying a locked row.
+
+Example:
+
+T1 acquires a row lock using SELECT ... FOR UPDATE.
+T2 attempts to acquire a lock on the same row and waits.
+T1 books the ticket and commits.
+T1 releases the lock.
+T2 acquires the lock and reads the latest committed data (under READ COMMITTED isolation).
+
+Key points:
+
+Lock is acquired before modification.
+Other transactions attempting conflicting locks must wait.
+Ordinary reads may still be allowed.
+Suitable for high-contention scenarios.
+Can cause blocking and deadlocks.
+3. Quick Comparison
+Feature	Optimistic	Pessimistic
+Version column	Required for JPA version-based locking	Not required
+Database lock	No long-held lock	Row-level lock
+Conflict detection	During update/commit	At lock acquisition
+Concurrent reads	Allowed	Generally allowed
+Contention	Better when low	Better when high
+Main drawback	Locking exceptions	Blocking/deadlocks
+4. Spring Data JPA
+
+Optimistic locking:
+
+java
+@Version
+private Long version;
+
+java
+@Lock(LockModeType.OPTIMISTIC)
+Optional<Movie> findById(Long id);
+
+
+Pessimistic locking:
+
+java
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("SELECT m FROM Movie m WHERE m.id = :id")
+Optional<Movie> findByIdWithLock(Long id);
+
+
+Use @Transactional around the booking operation so the lock remains held until transaction completion.
+
+5. Interview Takeaway
+Optimistic locking: Detects conflicts when updating using version comparison.
+Pessimistic locking: Prevents conflicting operations by acquiring database locks upfront.
+Optimistic locking is preferred when conflicts are rare.
+Pessimistic locking is preferred when conflicts are frequent and preventing concurrent modifications is important.	
+
+Optimistic Locking Logs
+------------------------
+Thread-1 is attempting to book the seat
+Thread-2 is attempting to book the seat
+Hibernate: select s1_0.id,s1_0.booked,s1_0.movieName,s1_0.version from seat s1_0 where s1_0.id=?
+Hibernate: select s1_0.id,s1_0.booked,s1_0.movieName,s1_0.version from seat s1_0 where s1_0.id=?
+Thread-1 fetched seat with version 0
+Thread-2 fetched seat with version 0
+Hibernate: update seat set booked=?,movieName=?,version=? where id=? and version=?
+Hibernate: update seat set booked=?,movieName=?,version=? where id=? and version=?
+Thread-2 successfully booked the seat with version 1
+Thread-1 failed : Unexpected row count (expected row count 1 but was 0) [update seat set booked=?,movieName=?,version=? where id=? and version=?] for entity [com.locking_demo.model.Seat with id '1']
+
+
+Pessimistic Locking Logs
+-------------------------
+Thread-3 is attempting to fetch the seat
+Thread-4 is attempting to fetch the seat
+Hibernate: select s1_0.id,s1_0.booked,s1_0.movieName,s1_0.version from seat s1_0 where s1_0.id=? for update of s1_0
+Hibernate: select s1_0.id,s1_0.booked,s1_0.movieName,s1_0.version from seat s1_0 where s1_0.id=? for update of s1_0
+Thread-3 acquired the lock for seat id 2
+Thread-3 booking the seat 2
+Thread-3 successfully book the seat with ID 2
+Hibernate: update seat set booked=?,movieName=?,version=? where id=? and version=?
+Thread-4 acquired the lock for seat id 2
+Thread-4 failed Seat Id 2 is already booked 
+Thread-4 failed: Seat already booked !
